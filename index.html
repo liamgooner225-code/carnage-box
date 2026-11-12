@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>PHYSBOX 3D — Physics Sandbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#070913;--panel:rgba(17,21,38,.72);--line:rgba(255,255,255,.11);--txt:#eef2ff;--muted:#99a4c4;--accent:#7c5cff;--cyan:#3ee6ff}
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);font-family:Inter,sans-serif;color:var(--txt)}
+#app,canvas{width:100%;height:100%;display:block}canvas{position:fixed;inset:0}
+#hud{position:fixed;inset:0;pointer-events:none;padding:18px;display:flex;justify-content:space-between;gap:18px}
+.card{pointer-events:auto;background:var(--panel);border:1px solid var(--line);box-shadow:0 20px 70px rgba(0,0,0,.35);backdrop-filter:blur(18px);border-radius:18px}
+.brand{padding:16px 18px;width:330px}.logo{font:800 24px "Space Grotesk";letter-spacing:-1px}.logo b{color:var(--cyan)}.sub{font-size:12px;color:var(--muted);margin-top:4px}
+.tools{padding:10px;width:330px;margin-top:12px}.tools h3{font-size:11px;text-transform:uppercase;letter-spacing:1.4px;color:var(--muted);margin:8px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+button{border:1px solid var(--line);background:rgba(255,255,255,.055);color:var(--txt);padding:11px;border-radius:11px;font:600 12px Inter;cursor:pointer;transition:.16s}
+button:hover{transform:translateY(-1px);background:rgba(124,92,255,.28);border-color:rgba(124,92,255,.7)}
+button.active{background:var(--accent);border-color:#a797ff}
+.right{display:flex;flex-direction:column;align-items:flex-end;gap:10px}.stats{padding:12px 15px;font-size:12px;color:var(--muted);text-align:right}.stats b{color:var(--txt)}
+.help{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:10px 15px;font-size:11px;color:var(--muted)}
+.toast{position:absolute;left:50%;top:20px;transform:translateX(-50%) translateY(-20px);opacity:0;transition:.25s;padding:10px 16px;font-size:12px}.toast.show{opacity:1;transform:translateX(-50%)}
+@media(max-width:720px){#hud{padding:10px}.brand,.tools{width:260px}.grid{grid-template-columns:1fr 1fr}.help{display:none}.brand{padding:12px}.logo{font-size:20px}}
+</style>
+</head>
+<body>
+<canvas id="app"></canvas>
+<div id="hud">
+  <div>
+    <div class="card brand"><div class="logo">PHYS<b>BOX</b> <span style="font-size:11px;color:#99a4c4">3D</span></div><div class="sub">Ultimate browser physics sandbox • Prototype Alpha</div></div>
+    <div class="card tools">
+      <h3>Spawn Lab</h3>
+      <div class="grid">
+        <button data-spawn="box">⬛ Box</button><button data-spawn="sphere">🔵 Sphere</button>
+        <button data-spawn="tower">🏗 Tower</button><button data-spawn="ragdoll">🧍 Dummy</button>
+        <button data-spawn="rain">🌧 Object Rain</button><button id="clear">🗑 Clear</button>
+      </div>
+      <h3 style="margin-top:16px">World Controls</h3>
+      <div class="grid">
+        <button id="slow">🐢 Slow Motion</button><button id="gravity">🌍 Low Gravity</button>
+        <button id="reset">↻ Reset World</button><button id="freeze">❄ Freeze</button>
+      </div>
+    </div>
+  </div>
+  <div class="right">
+    <div class="card stats"><b id="count">0</b> active objects<br><span id="fps">Physics running</span></div>
+  </div>
+  <div class="card help">WASD move • Mouse drag look • Left click launches a physics ball • Scroll changes speed</div>
+</div>
+<div id="toast" class="card toast">Ready.</div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/","cannon-es":"https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+
+const canvas=document.querySelector('#app');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x080a14);scene.fog=new THREE.Fog(0x080a14,35,110);
+
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,300);
+camera.position.set(9,7,14);
+
+const world=new CANNON.World({gravity:new CANNON.Vec3(0,-9.82,0)});
+world.broadphase=new CANNON.SAPBroadphase(world);
+world.allowSleep=true;
+const objects=[];
+
+const hemi=new THREE.HemisphereLight(0x8095ff,0x161b2b,1.8);scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xffffff,2.4);sun.position.set(12,18,8);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);scene.add(sun);
+const cyan=new THREE.PointLight(0x3ee6ff,20,18);cyan.position.set(-10,6,-6);scene.add(cyan);
+const purple=new THREE.PointLight(0x7c5cff,25,18);purple.position.set(8,5,-8);scene.add(purple);
+
+const floorMat=new THREE.MeshStandardMaterial({color:0x11182b,roughness:.72,metalness:.15});
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(100,100),floorMat);floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
+const groundBody=new CANNON.Body({mass:0,shape:new CANNON.Plane()});groundBody.quaternion.setFromEuler(-Math.PI/2,0,0);world.addBody(groundBody);
+
+const grid=new THREE.GridHelper(80,80,0x24304f,0x18203a);grid.position.y=.01;scene.add(grid);
+function wall(x,z,w,d){
+ const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,5,d),new THREE.MeshStandardMaterial({color:0x151b2d,roughness:.8}));
+ mesh.position.set(x,2.5,z);mesh.receiveShadow=true;scene.add(mesh);
+ const body=new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(w/2,2.5,d/2)),position:new CANNON.Vec3(x,2.5,z)});world.addBody(body);
+}
+wall(0,-25,50,1);wall(-25,0,1,50);wall(25,0,1,50);
+
+const mats=[
+ new THREE.MeshStandardMaterial({color:0x7c5cff,roughness:.35,metalness:.3}),
+ new THREE.MeshStandardMaterial({color:0x3ee6ff,roughness:.28,metalness:.2}),
+ new THREE.MeshStandardMaterial({color:0xff5f9e,roughness:.4,metalness:.15}),
+ new THREE.MeshStandardMaterial({color:0xffbd4a,roughness:.4,metalness:.2})
+];
+function add(geom,shape,pos,mass=2,mat=mats[Math.floor(Math.random()*mats.length)]){
+ const mesh=new THREE.Mesh(geom,mat);mesh.position.copy(pos);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);
+ const body=new CANNON.Body({mass,shape,position:new CANNON.Vec3(pos.x,pos.y,pos.z),linearDamping:.015,angularDamping:.015});
+ body.sleepSpeedLimit=.08;body.sleepTimeLimit=.5;world.addBody(body);objects.push({mesh,body});return {mesh,body};
+}
+function spawnBox(p=new THREE.Vector3((Math.random()-.5)*8,8,(Math.random()-.5)*8),size=.8){
+ return add(new THREE.BoxGeometry(size,size,size),new CANNON.Box(new CANNON.Vec3(size/2,size/2,size/2)),p,2);
+}
+function spawnSphere(p=new THREE.Vector3((Math.random()-.5)*8,8,(Math.random()-.5)*8),r=.55){
+ return add(new THREE.SphereGeometry(r,32,20),new CANNON.Sphere(r),p,1.6);
+}
+function tower(){
+ for(let y=0;y<7;y++) for(let x=-1;x<=1;x++) spawnBox(new THREE.Vector3(x*1.05,1+y*1.05,0),.95);
+}
+function ragdoll(p=new THREE.Vector3(0,7,0)){
+ const parts=[
+  [new THREE.SphereGeometry(.42,24,16),new CANNON.Sphere(.42),[0,1.7,0],.7],
+  [new THREE.BoxGeometry(.8,1.2,.45),new CANNON.Box(new CANNON.Vec3(.4,.6,.225)),[0,.65,0],2],
+  [new THREE.CapsuleGeometry(.16,.8,8,16),new CANNON.Sphere(.25),[-.72,.8,0],.8],
+  [new THREE.CapsuleGeometry(.16,.8,8,16),new CANNON.Sphere(.25),[.72,.8,0],.8],
+  [new THREE.CapsuleGeometry(.2,1,8,16),new CANNON.Sphere(.3),[-.28,-.65,0],1],
+  [new THREE.CapsuleGeometry(.2,1,8,16),new CANNON.Sphere(.3),[.28,-.65,0],1]
+ ];
+ const group=[];
+ parts.forEach(([g,s,o,m],i)=>{const q=add(g,s,p.clone().add(new THREE.Vector3(...o)),m,new THREE.MeshStandardMaterial({color:i===0?0xe9c5a2:0x4d8cff,roughness:.55}));group.push(q);});
+ // loose physics constraints: intentionally playful dummy
+ const links=[[0,1],[1,2],[1,3],[1,4],[1,5]];
+ links.forEach(([a,b])=>world.addConstraint(new CANNON.DistanceConstraint(group[a].body,group[b].body,1.05,1e6)));
+}
+function clearDynamic(){for(const o of objects){scene.remove(o.mesh);world.removeBody(o.body)}objects.length=0;}
+function resetWorld(){clearDynamic();for(let i=0;i<8;i++)spawnBox(new THREE.Vector3((i-3.5)*1.1,2+i*.9,0),.9);toast('World reset');}
+resetWorld();
+
+let slow=false,lowG=false,frozen=false;
+document.querySelectorAll('[data-spawn]').forEach(b=>b.onclick=()=>{
+ const t=b.dataset.spawn;
+ if(t==='box')spawnBox(); if(t==='sphere')spawnSphere(); if(t==='tower')tower();
+ if(t==='ragdoll')ragdoll(); if(t==='rain'){for(let i=0;i<35;i++)(i%2?spawnBox:spawnSphere)(new THREE.Vector3((Math.random()-.5)*18,6+Math.random()*10,(Math.random()-.5)*18));}
+});
+document.querySelector('#clear').onclick=()=>{clearDynamic();toast('Sandbox cleared')};
+document.querySelector('#reset').onclick=resetWorld;
+document.querySelector('#slow').onclick=e=>{slow=!slow;e.target.classList.toggle('active',slow);toast(slow?'Slow motion enabled':'Normal speed')};
+document.querySelector('#gravity').onclick=e=>{lowG=!lowG;world.gravity.y=lowG?-2.4:-9.82;e.target.classList.toggle('active',lowG);toast(lowG?'Low gravity!':'Earth gravity restored')};
+document.querySelector('#freeze').onclick=e=>{frozen=!frozen;e.target.classList.toggle('active',frozen);toast(frozen?'Physics frozen':'Physics resumed')};
+
+let toastTimer;function toast(s){const el=document.querySelector('#toast');el.textContent=s;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),1200)}
+
+const keys={};addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+let yaw=-.55,pitch=-.28,drag=false,lastX,lastY,speed=12;
+canvas.addEventListener('mousedown',e=>{if(e.button===2){drag=true;lastX=e.clientX;lastY=e.clientY}});
+addEventListener('mouseup',()=>drag=false);
+addEventListener('mousemove',e=>{if(drag){yaw-=(e.clientX-lastX)*.005;pitch=Math.max(-1.2,Math.min(.5,pitch-(e.clientY-lastY)*.005));lastX=e.clientX;lastY=e.clientY}});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+canvas.addEventListener('wheel',e=>speed=Math.max(5,Math.min(30,speed-e.deltaY*.01)));
+canvas.addEventListener('click',e=>{
+ if(drag)return;
+ const dir=new THREE.Vector3();camera.getWorldDirection(dir);
+ const p=camera.position.clone().add(dir.multiplyScalar(1.5));const o=spawnSphere(p,.25);
+ o.body.velocity.set(dir.x*28,dir.y*28,dir.z*28);o.body.angularVelocity.set(Math.random()*10,Math.random()*10,Math.random()*10);
+});
+
+const clock=new THREE.Clock();let accumulator=0;
+function animate(){
+ requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);
+ const forward=new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
+ const right=new THREE.Vector3(forward.z,0,-forward.x);
+ const move=new THREE.Vector3();
+ if(keys.w)move.add(forward);if(keys.s)move.sub(forward);if(keys.d)move.add(right);if(keys.a)move.sub(right);
+ if(keys[' '])move.y+=1;if(keys.shift)move.y-=1;if(move.lengthSq())camera.position.add(move.normalize().multiplyScalar(speed*dt));
+ camera.rotation.order='YXZ';camera.rotation.y=yaw;camera.rotation.x=pitch;
+ if(!frozen){accumulator+=dt*(slow?.25:1);while(accumulator>=1/60){world.step(1/60);accumulator-=1/60;}}
+ for(const o of objects){o.mesh.position.copy(o.body.position);o.mesh.quaternion.copy(o.body.quaternion)}
+ document.querySelector('#count').textContent=objects.length;
+ renderer.render(scene,camera);
+}
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+animate();
+</script>
+</body></html>
